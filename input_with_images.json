@@ -1,0 +1,30 @@
+{
+    "batch_size": 1,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 50,
+    "max_generate_length": 1024,
+    "requests": [
+        {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "image": "examples/multimodal/pics/person.jpg"
+                        },
+                        {
+                            "type": "text",
+                            "text": "What's the color of the clothes."
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

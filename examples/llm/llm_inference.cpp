@@ -761,6 +761,7 @@ int main(int argc, char* argv[])
         }
 
         bool requestStatus = false;
+	LOG_INFO("Reference starting for request %zu", requestIdx);
         if (args.eagleArgs.enabled)
         {
             requestStatus = eagleInferenceRuntime->handleRequest(request, response, stream);
@@ -769,6 +770,7 @@ int main(int argc, char* argv[])
         {
             requestStatus = llmInferenceRuntime->handleRequest(request, response, stream);
         }
+	LOG_INFO("Reference done for request %zu", requestIdx);
 
         if (requestStatus)
         {

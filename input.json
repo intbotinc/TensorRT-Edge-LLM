@@ -1,0 +1,18 @@
+{
+    "batch_size": 1,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 50,
+    "max_generate_length": 128,
+    "requests": [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What is the capital of China?"
+                }
+            ]
+        }
+    ]
+}
+

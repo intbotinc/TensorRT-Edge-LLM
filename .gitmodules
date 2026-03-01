@@ -4,3 +4,6 @@
 [submodule "3rdParty/nlohmannJson"]
 	path = 3rdParty/nlohmannJson
 	url = https://github.com/nlohmann/json.git
+[submodule "3rdParty/cpp-httplib"]
+        path = 3rdParty/cpp-httplib
+        url = https://github.com/yhirose/cpp-httplib.git

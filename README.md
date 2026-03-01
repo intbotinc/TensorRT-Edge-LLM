@@ -40,6 +40,7 @@ Complete documentation for installation, usage, and deployment:
 ### Additional Resources
 
 - **[Examples Directory](examples/)** - LLM and VLM inference examples
+- **HTTP Inference Server** - Build `llm_http_server` after placing `3rdParty/httplib/httplib.h` (cpp-httplib)
 - **[Tests](tests/)** - Comprehensive test suite for contributors
 
 ---
