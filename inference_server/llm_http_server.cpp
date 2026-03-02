@@ -1,18 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 intbot inc. All rights reserved.
  */
 
 #include "common/trtUtils.h"
@@ -23,8 +10,10 @@
 #include "http_server_utils.h"
 
 #include <ctime>
+#include <cstdint>
 #include <getopt.h>
 #include <chrono>
+#include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -73,7 +62,13 @@ enum ServerOptionId : int
     EAGLE_VERIFY_TREE_SIZE = 1014,
     SAVE_IMAGE_TO_DISK = 1015,
     IMAGE_SAVE_DIR = 1016,
-    MAX_IMAGE_BYTES = 1017
+    MAX_IMAGE_BYTES = 1017,
+    LOG_TO_CONSOLE = 1018,
+    LOG_DIR = 1019,
+    LOG_FILE_BASE_NAME = 1020,
+    LOG_MAX_FILE_SIZE_MB = 1021,
+    LOG_MAX_FILES = 1022,
+    LOG_RETENTION_DAYS = 1023
 };
 
 void printUsage(char const* programName)
@@ -103,6 +98,12 @@ void printUsage(char const* programName)
     std::cerr << "  --saveImageToDisk             Save base64 images to disk (default: false)" << std::endl;
     std::cerr << "  --imageSaveDir                Image save directory (default: ./image_dumps)" << std::endl;
     std::cerr << "  --maxImageBytes               Maximum decoded image bytes (default: 10485760)" << std::endl;
+    std::cerr << "  --logToConsole                Keep printing logs to stdout/stderr (default: false)" << std::endl;
+    std::cerr << "  --logDir                      Log directory (default: ./logs)" << std::endl;
+    std::cerr << "  --logFileBaseName             Log file base name (default: llm_http_server)" << std::endl;
+    std::cerr << "  --logMaxFileSizeMB            Rotate size in MB (default: 100)" << std::endl;
+    std::cerr << "  --logMaxFiles                 Max rotated files to keep (default: 20, 0 means unlimited)" << std::endl;
+    std::cerr << "  --logRetentionDays            Delete files older than N days (default: 7, 0 means unlimited)" << std::endl;
 }
 
 bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
@@ -125,6 +126,12 @@ bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
         {"saveImageToDisk", no_argument, 0, ServerOptionId::SAVE_IMAGE_TO_DISK},
         {"imageSaveDir", required_argument, 0, ServerOptionId::IMAGE_SAVE_DIR},
         {"maxImageBytes", required_argument, 0, ServerOptionId::MAX_IMAGE_BYTES},
+        {"logToConsole", no_argument, 0, ServerOptionId::LOG_TO_CONSOLE},
+        {"logDir", required_argument, 0, ServerOptionId::LOG_DIR},
+        {"logFileBaseName", required_argument, 0, ServerOptionId::LOG_FILE_BASE_NAME},
+        {"logMaxFileSizeMB", required_argument, 0, ServerOptionId::LOG_MAX_FILE_SIZE_MB},
+        {"logMaxFiles", required_argument, 0, ServerOptionId::LOG_MAX_FILES},
+        {"logRetentionDays", required_argument, 0, ServerOptionId::LOG_RETENTION_DAYS},
         {0, 0, 0, 0}};
 
     int opt;
@@ -164,6 +171,52 @@ bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
             if (args.maxImageBytes == 0)
             {
                 LOG_ERROR("Invalid maxImageBytes: %s", optarg);
+                return false;
+            }
+            break;
+        case ServerOptionId::LOG_TO_CONSOLE: args.logToConsole = true; break;
+        case ServerOptionId::LOG_DIR:
+            args.logDir = optarg;
+            if (args.logDir.empty())
+            {
+                LOG_ERROR("Invalid logDir: %s", optarg);
+                return false;
+            }
+            break;
+        case ServerOptionId::LOG_FILE_BASE_NAME:
+            args.logFileBaseName = optarg;
+            if (args.logFileBaseName.empty())
+            {
+                LOG_ERROR("Invalid logFileBaseName: %s", optarg);
+                return false;
+            }
+            break;
+        case ServerOptionId::LOG_MAX_FILE_SIZE_MB:
+        {
+            auto const maxFileSizeMb = std::stoull(optarg);
+            constexpr uint64_t kMbToBytes = 1024ULL * 1024ULL;
+            auto const maxSizeTByMb = static_cast<uint64_t>(std::numeric_limits<size_t>::max() / kMbToBytes);
+            if (maxFileSizeMb == 0 || maxFileSizeMb > maxSizeTByMb)
+            {
+                LOG_ERROR("Invalid logMaxFileSizeMB: %s", optarg);
+                return false;
+            }
+            args.logMaxFileBytes = static_cast<size_t>(maxFileSizeMb * kMbToBytes);
+            break;
+        }
+        case ServerOptionId::LOG_MAX_FILES:
+            args.logMaxFiles = std::stoi(optarg);
+            if (args.logMaxFiles < 0)
+            {
+                LOG_ERROR("Invalid logMaxFiles: %s", optarg);
+                return false;
+            }
+            break;
+        case ServerOptionId::LOG_RETENTION_DAYS:
+            args.logRetentionDays = std::stoi(optarg);
+            if (args.logRetentionDays < 0)
+            {
+                LOG_ERROR("Invalid logRetentionDays: %s", optarg);
                 return false;
             }
             break;
@@ -353,6 +406,14 @@ int main(int argc, char* argv[])
         printUsage(argv[0]);
         return EXIT_SUCCESS;
     }
+
+    if (!gLogger.setFileOutput(
+            args.logDir, args.logFileBaseName, args.logMaxFileBytes, args.logMaxFiles, args.logRetentionDays))
+    {
+        std::cerr << "Failed to initialize log file at '" << args.logDir << "'" << std::endl;
+        return EXIT_FAILURE;
+    }
+    gLogger.setConsoleEnabled(args.logToConsole);
 
     InferenceService service(args);
     if (!service.initialize())

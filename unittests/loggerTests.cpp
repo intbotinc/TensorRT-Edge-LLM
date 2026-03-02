@@ -18,9 +18,13 @@
 #include "common/logger.h"
 #include "testUtils.h"
 #include <NvInferRuntime.h>
+#include <chrono>
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <fstream>
 #include <regex>
 #include <sstream>
+#include <vector>
 
 using namespace trt_edgellm;
 using namespace trt_edgellm::logger;
@@ -30,7 +34,8 @@ class LoggerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-
+        gLogger.closeFileOutput();
+        gLogger.setConsoleEnabled(true);
         gLogger.setLevel(nvinfer1::ILogger::Severity::kVERBOSE);
         gLogger.setShowTimestamp(true);
         gLogger.setShowLocation(true);
@@ -51,11 +56,21 @@ protected:
         std::cout.rdbuf(originalCoutBuffer);
         std::cerr.rdbuf(originalCerrBuffer);
 
+        gLogger.closeFileOutput();
+        gLogger.setConsoleEnabled(true);
+
         // Clear capture buffers
         coutCapture.str("");
         coutCapture.clear();
         cerrCapture.str("");
         cerrCapture.clear();
+
+        for (auto const& tempDir : tempDirs)
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(tempDir, ec);
+        }
+        tempDirs.clear();
     }
 
     std::string getCoutOutput()
@@ -78,11 +93,28 @@ protected:
         cerrCapture.clear();
     }
 
+    std::filesystem::path makeTempLogDir()
+    {
+        auto const stamp
+            = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "_" + std::to_string(tempDirs.size());
+        auto const dir = std::filesystem::temp_directory_path() / ("edge_llm_logger_tests_" + stamp);
+        std::filesystem::create_directories(dir);
+        tempDirs.push_back(dir);
+        return dir;
+    }
+
+    static std::string readTextFile(std::filesystem::path const& path)
+    {
+        std::ifstream file(path);
+        return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    }
+
 private:
     std::streambuf* originalCoutBuffer;
     std::streambuf* originalCerrBuffer;
     std::ostringstream coutCapture;
     std::ostringstream cerrCapture;
+    std::vector<std::filesystem::path> tempDirs;
 };
 
 TEST_F(LoggerTest, BasicLoggingMacros)
@@ -457,4 +489,96 @@ TEST_F(LoggerTest, DirectLoggerMethods)
     EXPECT_TRUE(coutOutput.find("Direct info call") != std::string::npos);
     EXPECT_TRUE(cerrOutput.find("Direct warning call") != std::string::npos);
     EXPECT_TRUE(cerrOutput.find("Direct error call") != std::string::npos);
+}
+
+TEST_F(LoggerTest, FileOutputAndConsoleToggle)
+{
+    auto const logDir = makeTempLogDir();
+    ASSERT_TRUE(gLogger.setFileOutput(logDir.string(), "logger_file_test", 1024 * 1024, 10, 7));
+    gLogger.setConsoleEnabled(false);
+    gLogger.setShowTimestamp(false);
+    gLogger.setShowLocation(false);
+    clearOutput();
+
+    LOG_INFO("file output only message");
+
+    EXPECT_TRUE(getCoutOutput().empty());
+    EXPECT_TRUE(getCerrOutput().empty());
+
+    auto const activeLog = logDir / "logger_file_test.log";
+    ASSERT_TRUE(std::filesystem::exists(activeLog));
+    auto const content = readTextFile(activeLog);
+    EXPECT_TRUE(content.find("file output only message") != std::string::npos);
+}
+
+TEST_F(LoggerTest, FileRotationBySize)
+{
+    auto const logDir = makeTempLogDir();
+    ASSERT_TRUE(gLogger.setFileOutput(logDir.string(), "logger_rotate_test", 100, 20, 7));
+    gLogger.setConsoleEnabled(false);
+    gLogger.setShowTimestamp(false);
+    gLogger.setShowLocation(false);
+    clearOutput();
+
+    for (int i = 0; i < 6; ++i)
+    {
+        LOG_INFO("rotation payload %d: 0123456789012345678901234567890123456789", i);
+    }
+
+    int rotatedCount = 0;
+    for (auto const& entry : std::filesystem::directory_iterator(logDir))
+    {
+        auto const name = entry.path().filename().string();
+        if (name.rfind("logger_rotate_test.", 0) == 0 && name != "logger_rotate_test.log"
+            && entry.path().extension() == ".log")
+        {
+            rotatedCount++;
+        }
+    }
+
+    EXPECT_TRUE(std::filesystem::exists(logDir / "logger_rotate_test.log"));
+    EXPECT_GE(rotatedCount, 1);
+}
+
+TEST_F(LoggerTest, FileRetentionAndCountCleanup)
+{
+    auto const logDir = makeTempLogDir();
+    auto const baseName = std::string("logger_cleanup_test");
+    auto const oldPath = logDir / (baseName + ".20200101-010101.0.log");
+    auto const keep1 = logDir / (baseName + ".20250101-010101.0.log");
+    auto const keep2 = logDir / (baseName + ".20250101-010102.0.log");
+    auto const keep3 = logDir / (baseName + ".20250101-010103.0.log");
+
+    for (auto const& path : {oldPath, keep1, keep2, keep3})
+    {
+        std::ofstream(path) << "seed";
+    }
+
+    std::error_code ec;
+    auto const now = std::filesystem::file_time_type::clock::now();
+    std::filesystem::last_write_time(oldPath, now - std::chrono::hours(72), ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(keep1, now - std::chrono::hours(3), ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(keep2, now - std::chrono::hours(2), ec);
+    ASSERT_FALSE(ec);
+    std::filesystem::last_write_time(keep3, now - std::chrono::hours(1), ec);
+    ASSERT_FALSE(ec);
+
+    ASSERT_TRUE(gLogger.setFileOutput(logDir.string(), baseName, 1024 * 1024, 2, 1));
+    gLogger.setConsoleEnabled(false);
+
+    EXPECT_FALSE(std::filesystem::exists(oldPath));
+
+    int remainingRotated = 0;
+    for (auto const& entry : std::filesystem::directory_iterator(logDir))
+    {
+        auto const name = entry.path().filename().string();
+        if (name.rfind(baseName + ".", 0) == 0 && name != (baseName + ".log") && entry.path().extension() == ".log")
+        {
+            remainingRotated++;
+        }
+    }
+    EXPECT_EQ(remainingRotated, 2);
+    EXPECT_TRUE(std::filesystem::exists(logDir / (baseName + ".log")));
 }
