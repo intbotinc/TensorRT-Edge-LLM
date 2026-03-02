@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "examples/llm/http_server_utils.h"
+#include "inference_server/http_server_utils.h"
 
 #include <gtest/gtest.h>
 
