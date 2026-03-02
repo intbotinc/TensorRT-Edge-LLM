@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,7 @@ struct ParsedRequest
 {
     rt::LLMGenerationRequest request;
     std::string modelId;
+    std::optional<int64_t> clientSeq;
 };
 
 inline nlohmann::json makeErrorResponse(std::string const& message,
@@ -338,6 +340,23 @@ inline bool parseChatCompletionRequest(nlohmann::json const& body, ServerArgs co
     request.requests.push_back(std::move(single));
     parsed.request = std::move(request);
     parsed.modelId = body.value("model", args.modelId);
+    parsed.clientSeq = std::nullopt;
+    if (body.contains("client_seq"))
+    {
+        auto const& clientSeqJson = body["client_seq"];
+        if (clientSeqJson.is_number_integer() || clientSeqJson.is_number_unsigned())
+        {
+            try
+            {
+                parsed.clientSeq = clientSeqJson.get<int64_t>();
+            }
+            catch (...)
+            {
+                // Keep compatibility: ignore malformed client_seq values.
+                parsed.clientSeq = std::nullopt;
+            }
+        }
+    }
     return true;
 }
 

@@ -33,6 +33,7 @@ Build a single-process C++ HTTP service that exposes an OpenAI-compatible API (n
 ```json
 {
   "model": "trt-edgellm",
+  "client_seq": 4227,
   "messages": [
     {
       "role": "user",
@@ -48,6 +49,8 @@ Build a single-process C++ HTTP service that exposes an OpenAI-compatible API (n
 }
 ```
 
+`client_seq` is optional. The server must accept requests with or without this field.
+
 ### Response
 ```json
 {
@@ -55,6 +58,7 @@ Build a single-process C++ HTTP service that exposes an OpenAI-compatible API (n
   "object": "chat.completion",
   "created": 1700000000,
   "model": "trt-edgellm",
+  "client_seq": 4227,
   "choices": [
     {
       "index": 0,
@@ -66,6 +70,10 @@ Build a single-process C++ HTTP service that exposes an OpenAI-compatible API (n
     "prompt_tokens": 12,
     "completion_tokens": 3,
     "total_tokens": 15
+  },
+  "metrics": {
+    "server_total_ms": 805,
+    "server_infer_ms": 790
   }
 }
 ```
@@ -98,6 +106,8 @@ Maps OpenAI-compatible JSON -> internal request:
 
 ### D. Response Builder
 Maps internal response -> OpenAI-compatible JSON
+- Echo optional `client_seq` when provided by client
+- Include per-request timing metrics in response for tracing
 
 ---
 
@@ -196,15 +206,27 @@ Image-related:
 
 1. HTTP request arrives
 2. Parse JSON body
-3. Validate required fields
-4. Build `rt::LLMGenerationRequest`
-5. Run `handleRequest()`
-6. Build JSON response
-7. Return HTTP response
+3. Extract optional `client_seq` (if missing, continue with `client_seq = null`)
+4. Validate required fields
+5. Build `rt::LLMGenerationRequest`
+6. Run `handleRequest()`
+7. Measure and log per-request timing (`server_total_ms`, `server_infer_ms`) with `client_seq`
+8. Build JSON response (including optional `client_seq` and timing metrics)
+9. Return HTTP response
 
 ---
 
-## 9. Future Extensions
+## 9. Request Correlation and Compatibility
+
+- Correlation key is `client_seq` from request JSON body.
+- No HTTP header is required for request correlation.
+- If `client_seq` is missing or invalid type, the server must still process the request.
+- Server logs should print one line per request with `client_seq` and elapsed timing.
+- Client and server logs can be joined by `client_seq` for latency analysis.
+
+---
+
+## 10. Future Extensions
 
 - Add streaming
 - Add batching + queue
@@ -213,7 +235,7 @@ Image-related:
 
 ---
 
-## 10. File Layout Proposal
+## 11. File Layout Proposal
 
 - `examples/llm/llm_http_server.cpp` (new main)
 - `examples/llm/http/` (optional helpers)
@@ -221,7 +243,7 @@ Image-related:
 
 ---
 
-## 11. Why This Design
+## 12. Why This Design
 
 - Minimal changes to existing runtime flow
 - Keeps GPU engine warm for low latency

@@ -237,21 +237,26 @@ public:
 
     bool handleChatCompletion(Json const& body, Json& response, std::string& err, bool& isServerError)
     {
+        auto const totalStart = std::chrono::steady_clock::now();
         isServerError = false;
         http::ParsedRequest parsed;
         if (!http::parseChatCompletionRequest(body, mArgs, parsed, err))
         {
             return false;
         }
-        //LOG_INFO("Request JSON: %s", body.dump(2).c_str());
-        LOG_INFO("Request model: %s", parsed.modelId.c_str());
+        std::string clientSeqStr = parsed.clientSeq.has_value() ? std::to_string(*parsed.clientSeq) : "na";
+        LOG_INFO("Request received: model=%s client_seq=%s", parsed.modelId.c_str(), clientSeqStr.c_str());
 
         rt::LLMGenerationResponse runtimeResponse;
         bool status = false;
+        int64_t serverQueueWaitMs = 0;
+        int64_t serverInferMs = 0;
 
         {
-            auto const start = std::chrono::steady_clock::now();
+            auto const queueStart = std::chrono::steady_clock::now();
             std::lock_guard<std::mutex> guard(mMutex);
+            auto const inferStart = std::chrono::steady_clock::now();
+            serverQueueWaitMs = std::chrono::duration_cast<std::chrono::milliseconds>(inferStart - queueStart).count();
             if (mArgs.eagleArgs.enabled)
             {
                 status = mEagleRuntime->handleRequest(parsed.request, runtimeResponse, mStream);
@@ -260,20 +265,32 @@ public:
             {
                 status = mRuntime->handleRequest(parsed.request, runtimeResponse, mStream);
             }
-            auto const end = std::chrono::steady_clock::now();
-            auto const elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            LOG_INFO("Request completed in %lld ms", static_cast<long long>(elapsedMs));
+            auto const inferEnd = std::chrono::steady_clock::now();
+            serverInferMs = std::chrono::duration_cast<std::chrono::milliseconds>(inferEnd - inferStart).count();
         }
+        auto const totalEnd = std::chrono::steady_clock::now();
+        int64_t serverTotalMs = std::chrono::duration_cast<std::chrono::milliseconds>(totalEnd - totalStart).count();
 
         if (!status || runtimeResponse.outputTexts.empty())
         {
+            LOG_ERROR(
+                "Request failed: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld",
+                clientSeqStr.c_str(),
+                static_cast<long long>(serverQueueWaitMs),
+                static_cast<long long>(serverInferMs),
+                static_cast<long long>(serverTotalMs));
             err = "Inference failed";
             isServerError = true;
             return false;
         }
 
         std::string outputText = sanitizeUtf8ForJson(runtimeResponse.outputTexts[0]);
-        LOG_INFO("Response text: %s", outputText.c_str());
+        LOG_INFO(
+            "Request done: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld",
+            clientSeqStr.c_str(),
+            static_cast<long long>(serverQueueWaitMs),
+            static_cast<long long>(serverInferMs),
+            static_cast<long long>(serverTotalMs));
 
         Json choice;
         choice["index"] = 0;
@@ -285,6 +302,7 @@ public:
         response["object"] = "chat.completion";
         response["created"] = http::getCurrentUnixTimestamp();
         response["model"] = parsed.modelId;
+        response["client_seq"] = parsed.clientSeq.has_value() ? Json(*parsed.clientSeq) : Json(nullptr);
         response["choices"] = Json::array({choice});
 
         int64_t completionTokens = 0;
@@ -296,6 +314,9 @@ public:
         response["usage"]["prompt_tokens"] = 0;
         response["usage"]["completion_tokens"] = completionTokens;
         response["usage"]["total_tokens"] = completionTokens;
+        response["metrics"]["server_queue_wait_ms"] = serverQueueWaitMs;
+        response["metrics"]["server_infer_ms"] = serverInferMs;
+        response["metrics"]["server_total_ms"] = serverTotalMs;
 
         return true;
     }
