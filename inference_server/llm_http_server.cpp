@@ -344,7 +344,7 @@ public:
             static_cast<long long>(serverQueueWaitMs),
             static_cast<long long>(serverInferMs),
             static_cast<long long>(serverTotalMs));
-
+        LOG_INFO("client_seq=%s, Output text: %s", clientSeqStr.c_str(), outputText.c_str());
         Json choice;
         choice["index"] = 0;
         choice["message"]["role"] = "assistant";
