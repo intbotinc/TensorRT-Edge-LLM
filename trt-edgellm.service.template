@@ -1,0 +1,23 @@
+[Unit]
+Description=TensorRT Edge LLM HTTP Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/agi/cosmos/TensorRT-Edge-LLM
+ExecStart=/home/agi/cosmos/TensorRT-Edge-LLM/build/inference_server/llm_http_server \
+  --engineDir=/path/to/engine \
+  --multimodalEngineDir=/path/to/mm_engine \
+  --host=0.0.0.0 \
+  --port=8080 \
+  --logToConsole \
+  --logDir=/home/agi/.local/state/trt-edgellm/logs \
+  --logFileBaseName=llm_http_server
+Restart=on-failure
+RestartSec=3
+Environment=CUDA_VISIBLE_DEVICES=0
+# Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/your/extra/libs
+
+[Install]
+WantedBy=default.target
