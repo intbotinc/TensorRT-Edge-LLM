@@ -299,7 +299,35 @@ public:
         }
         std::string clientSeqStr = parsed.clientSeq.has_value() ? std::to_string(*parsed.clientSeq) : "na";
         LOG_INFO("Request received: model=%s client_seq=%s", parsed.modelId.c_str(), clientSeqStr.c_str());
-
+/*//for debug only 
+        std::string textPrompt;
+        for (auto const& singleRequest : parsed.request.requests)
+        {
+            for (auto const& message : singleRequest.messages)
+            {
+                for (auto const& content : message.contents)
+                {
+                    if (content.type != "text")
+                    {
+                        continue;
+                    }
+                    if (!textPrompt.empty())
+                    {
+                        textPrompt += "\n";
+                    }
+                    textPrompt += "[" + message.role + "] " + content.content;
+                }
+            }
+        }
+        if (textPrompt.empty())
+        {
+            LOG_INFO("client_seq=%s, Text prompt: <empty>", clientSeqStr.c_str());
+        }
+        else
+        {
+            LOG_INFO("client_seq=%s, Text prompt: %s", clientSeqStr.c_str(), textPrompt.c_str());
+        }
+*/
         rt::LLMGenerationResponse runtimeResponse;
         bool status = false;
         int64_t serverQueueWaitMs = 0;
