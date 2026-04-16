@@ -7,3 +7,6 @@
 [submodule "3rdParty/NVTX"]
 	path = 3rdParty/NVTX
 	url = https://github.com/NVIDIA/NVTX.git
+[submodule "3rdParty/cpp-httplib"]
+	path = 3rdParty/cpp-httplib
+	url = https://github.com/yhirose/cpp-httplib.git
