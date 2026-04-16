@@ -1,4 +1,21 @@
 /*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
  * SPDX-FileCopyrightText: Copyright (c) 2026 intbot inc. All rights reserved.
  */
 
@@ -52,8 +69,7 @@ struct ParsedRequest
     std::optional<int64_t> clientSeq;
 };
 
-inline nlohmann::json makeErrorResponse(std::string const& message,
-    std::string const& type = "invalid_request_error")
+inline nlohmann::json makeErrorResponse(std::string const& message, std::string const& type = "invalid_request_error")
 {
     nlohmann::json err;
     err["error"]["message"] = message;
@@ -68,12 +84,15 @@ inline int64_t getCurrentUnixTimestamp()
 
 inline size_t estimateDecodedSize(std::string const& input)
 {
-    if (input.size() < 4) return 0;
+    if (input.size() < 4)
+        return 0;
     size_t padding = 0;
     if (input.size() >= 2)
     {
-        if (input[input.size() - 1] == '=') padding++;
-        if (input[input.size() - 2] == '=') padding++;
+        if (input[input.size() - 1] == '=')
+            padding++;
+        if (input[input.size() - 2] == '=')
+            padding++;
     }
     return (input.size() / 4) * 3 - padding;
 }
@@ -94,8 +113,10 @@ inline bool decodeBase64(std::string const& input, std::vector<unsigned char>& o
     size_t padding = 0;
     if (input.size() >= 2)
     {
-        if (input[input.size() - 1] == '=') padding++;
-        if (input[input.size() - 2] == '=') padding++;
+        if (input[input.size() - 1] == '=')
+            padding++;
+        if (input[input.size() - 2] == '=')
+            padding++;
     }
 
     size_t decodedSize = (input.size() / 4) * 3 - padding;
@@ -151,8 +172,10 @@ inline bool decodeBase64(std::string const& input, std::vector<unsigned char>& o
             | (static_cast<uint32_t>(vals[2] & 0x3F) << 6) | (static_cast<uint32_t>(vals[3] & 0x3F));
 
         output.push_back(static_cast<unsigned char>((triple >> 16) & 0xFF));
-        if (input[i + 2] != '=') output.push_back(static_cast<unsigned char>((triple >> 8) & 0xFF));
-        if (input[i + 3] != '=') output.push_back(static_cast<unsigned char>(triple & 0xFF));
+        if (input[i + 2] != '=')
+            output.push_back(static_cast<unsigned char>((triple >> 8) & 0xFF));
+        if (input[i + 3] != '=')
+            output.push_back(static_cast<unsigned char>(triple & 0xFF));
     }
 
     if (output.size() != decodedSize)
@@ -176,8 +199,8 @@ inline std::string saveImageBytes(std::string const& dir, std::vector<unsigned c
     return path.string();
 }
 
-inline bool parseChatCompletionRequest(nlohmann::json const& body, ServerArgs const& args,
-    ParsedRequest& parsed, std::string& err)
+inline bool parseChatCompletionRequest(
+    nlohmann::json const& body, ServerArgs const& args, ParsedRequest& parsed, std::string& err)
 {
     if (!body.contains("messages") || !body["messages"].is_array())
     {

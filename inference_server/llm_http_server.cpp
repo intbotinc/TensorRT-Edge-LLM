@@ -1,18 +1,35 @@
 /*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/*
  * SPDX-FileCopyrightText: Copyright (c) 2026 intbot inc. All rights reserved.
  */
 
-#include "common/trtUtils.h"
 #include "common/logger.h"
+#include "common/trtUtils.h"
+#include "http_server_utils.h"
 #include "profileFormatter.h"
 #include "runtime/llmInferenceRuntime.h"
 #include "runtime/llmInferenceSpecDecodeRuntime.h"
-#include "http_server_utils.h"
 
-#include <ctime>
-#include <cstdint>
-#include <getopt.h>
 #include <chrono>
+#include <cstdint>
+#include <ctime>
+#include <getopt.h>
 #include <limits>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -102,8 +119,10 @@ void printUsage(char const* programName)
     std::cerr << "  --logDir                      Log directory (default: ./logs)" << std::endl;
     std::cerr << "  --logFileBaseName             Log file base name (default: llm_http_server)" << std::endl;
     std::cerr << "  --logMaxFileSizeMB            Rotate size in MB (default: 100)" << std::endl;
-    std::cerr << "  --logMaxFiles                 Max rotated files to keep (default: 20, 0 means unlimited)" << std::endl;
-    std::cerr << "  --logRetentionDays            Delete files older than N days (default: 7, 0 means unlimited)" << std::endl;
+    std::cerr << "  --logMaxFiles                 Max rotated files to keep (default: 20, 0 means unlimited)"
+              << std::endl;
+    std::cerr << "  --logRetentionDays            Delete files older than N days (default: 7, 0 means unlimited)"
+              << std::endl;
 }
 
 bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
@@ -111,15 +130,13 @@ bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
     static struct option serverOptions[] = {{"help", no_argument, 0, ServerOptionId::HELP},
         {"engineDir", required_argument, 0, ServerOptionId::ENGINE_DIR},
         {"multimodalEngineDir", required_argument, 0, ServerOptionId::MULTIMODAL_ENGINE_DIR},
-        {"host", required_argument, 0, ServerOptionId::HOST},
-        {"port", required_argument, 0, ServerOptionId::PORT},
+        {"host", required_argument, 0, ServerOptionId::HOST}, {"port", required_argument, 0, ServerOptionId::PORT},
         {"debug", no_argument, 0, ServerOptionId::DEBUG},
         {"defaultMaxGenerateLength", required_argument, 0, ServerOptionId::DEFAULT_MAX_GENERATE_LENGTH},
         {"defaultTemperature", required_argument, 0, ServerOptionId::DEFAULT_TEMPERATURE},
         {"defaultTopP", required_argument, 0, ServerOptionId::DEFAULT_TOP_P},
         {"defaultTopK", required_argument, 0, ServerOptionId::DEFAULT_TOP_K},
-        {"modelId", required_argument, 0, ServerOptionId::MODEL_ID},
-        {"eagle", no_argument, 0, ServerOptionId::EAGLE},
+        {"modelId", required_argument, 0, ServerOptionId::MODEL_ID}, {"eagle", no_argument, 0, ServerOptionId::EAGLE},
         {"eagleDraftTopK", required_argument, 0, ServerOptionId::EAGLE_DRAFT_TOP_K},
         {"eagleDraftStep", required_argument, 0, ServerOptionId::EAGLE_DRAFT_STEP},
         {"eagleVerifyTreeSize", required_argument, 0, ServerOptionId::EAGLE_VERIFY_TREE_SIZE},
@@ -131,8 +148,7 @@ bool parseServerArgs(ServerArgs& args, int argc, char* argv[])
         {"logFileBaseName", required_argument, 0, ServerOptionId::LOG_FILE_BASE_NAME},
         {"logMaxFileSizeMB", required_argument, 0, ServerOptionId::LOG_MAX_FILE_SIZE_MB},
         {"logMaxFiles", required_argument, 0, ServerOptionId::LOG_MAX_FILES},
-        {"logRetentionDays", required_argument, 0, ServerOptionId::LOG_RETENTION_DAYS},
-        {0, 0, 0, 0}};
+        {"logRetentionDays", required_argument, 0, ServerOptionId::LOG_RETENTION_DAYS}, {0, 0, 0, 0}};
 
     int opt;
     while ((opt = getopt_long(argc, argv, "", serverOptions, nullptr)) != -1)
@@ -269,15 +285,13 @@ public:
             {
                 rt::EagleDraftingConfig draftingConfig{
                     mArgs.eagleArgs.draftTopK, mArgs.eagleArgs.draftStep, mArgs.eagleArgs.verifyTreeSize};
-                mEagleRuntime = std::make_unique<rt::LLMInferenceSpecDecodeRuntime>(
-                    mArgs.engineDir, mArgs.multimodalEngineDir,
-                    std::unordered_map<std::string, std::string>{}, draftingConfig, mStream);
+                mEagleRuntime = std::make_unique<rt::LLMInferenceSpecDecodeRuntime>(mArgs.engineDir,
+                    mArgs.multimodalEngineDir, std::unordered_map<std::string, std::string>{}, draftingConfig, mStream);
             }
             else
             {
-                mRuntime = std::make_unique<rt::LLMInferenceRuntime>(
-                    mArgs.engineDir, mArgs.multimodalEngineDir, std::unordered_map<std::string, std::string>{},
-                    mStream);
+                mRuntime = std::make_unique<rt::LLMInferenceRuntime>(mArgs.engineDir, mArgs.multimodalEngineDir,
+                    std::unordered_map<std::string, std::string>{}, mStream);
             }
         }
         catch (std::exception const& e)
@@ -300,35 +314,35 @@ public:
         }
         std::string clientSeqStr = parsed.clientSeq.has_value() ? std::to_string(*parsed.clientSeq) : "na";
         LOG_INFO("Request received: model=%s client_seq=%s", parsed.modelId.c_str(), clientSeqStr.c_str());
-/*//for debug only 
-        std::string textPrompt;
-        for (auto const& singleRequest : parsed.request.requests)
-        {
-            for (auto const& message : singleRequest.messages)
-            {
-                for (auto const& content : message.contents)
+        /*//for debug only
+                std::string textPrompt;
+                for (auto const& singleRequest : parsed.request.requests)
                 {
-                    if (content.type != "text")
+                    for (auto const& message : singleRequest.messages)
                     {
-                        continue;
+                        for (auto const& content : message.contents)
+                        {
+                            if (content.type != "text")
+                            {
+                                continue;
+                            }
+                            if (!textPrompt.empty())
+                            {
+                                textPrompt += "\n";
+                            }
+                            textPrompt += "[" + message.role + "] " + content.content;
+                        }
                     }
-                    if (!textPrompt.empty())
-                    {
-                        textPrompt += "\n";
-                    }
-                    textPrompt += "[" + message.role + "] " + content.content;
                 }
-            }
-        }
-        if (textPrompt.empty())
-        {
-            LOG_INFO("client_seq=%s, Text prompt: <empty>", clientSeqStr.c_str());
-        }
-        else
-        {
-            LOG_INFO("client_seq=%s, Text prompt: %s", clientSeqStr.c_str(), textPrompt.c_str());
-        }
-*/
+                if (textPrompt.empty())
+                {
+                    LOG_INFO("client_seq=%s, Text prompt: <empty>", clientSeqStr.c_str());
+                }
+                else
+                {
+                    LOG_INFO("client_seq=%s, Text prompt: %s", clientSeqStr.c_str(), textPrompt.c_str());
+                }
+        */
         rt::LLMGenerationResponse runtimeResponse;
         bool status = false;
         int64_t serverQueueWaitMs = 0;
@@ -355,11 +369,8 @@ public:
 
         if (!status || runtimeResponse.outputTexts.empty())
         {
-            LOG_ERROR(
-                "Request failed: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld",
-                clientSeqStr.c_str(),
-                static_cast<long long>(serverQueueWaitMs),
-                static_cast<long long>(serverInferMs),
+            LOG_ERROR("Request failed: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld",
+                clientSeqStr.c_str(), static_cast<long long>(serverQueueWaitMs), static_cast<long long>(serverInferMs),
                 static_cast<long long>(serverTotalMs));
             err = "Inference failed";
             isServerError = true;
@@ -367,11 +378,8 @@ public:
         }
 
         std::string outputText = sanitizeUtf8ForJson(runtimeResponse.outputTexts[0]);
-        LOG_INFO(
-            "Request done: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld",
-            clientSeqStr.c_str(),
-            static_cast<long long>(serverQueueWaitMs),
-            static_cast<long long>(serverInferMs),
+        LOG_INFO("Request done: client_seq=%s queue_wait_ms=%lld infer_ms=%lld total_ms=%lld", clientSeqStr.c_str(),
+            static_cast<long long>(serverQueueWaitMs), static_cast<long long>(serverInferMs),
             static_cast<long long>(serverTotalMs));
         LOG_INFO("client_seq=%s, Output text: %s", clientSeqStr.c_str(), outputText.c_str());
         Json choice;
@@ -472,7 +480,7 @@ int main(int argc, char* argv[])
         }
         catch (Json::parse_error const& e)
         {
-        Json err = http::makeErrorResponse("Invalid JSON payload");
+            Json err = http::makeErrorResponse("Invalid JSON payload");
             res.status = 400;
             res.set_content(err.dump(2), "application/json");
             return;
