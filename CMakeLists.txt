@@ -174,6 +174,9 @@ add_subdirectory(cpp)
 # Build C++ examples to showcase the usage
 add_subdirectory(examples)
 
+# Build inference server (intbot addition)
+add_subdirectory(inference_server)
+
 option(BUILD_UNIT_TESTS "Enable building unit tests" OFF)
 
 if(BUILD_UNIT_TESTS)
