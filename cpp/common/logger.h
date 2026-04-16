@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +19,18 @@
 
 #include "stringUtils.h"
 #include <NvInferRuntime.h>
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace trt_edgellm
 {
@@ -49,7 +55,7 @@ struct SourceLocation
      * @param func Function name
      * @param l Line number
      */
-    SourceLocation(char const* f, char const* func, int32_t l) noexcept
+    SourceLocation(char const* f, char const* func, int32_t l)
         : file(f)
         , function(func)
         , lineNumber(l)
@@ -69,8 +75,11 @@ struct SourceLocation
 class EdgeLLMLogger : public nvinfer1::ILogger
 {
 public:
-    EdgeLLMLogger() noexcept = default;
-    ~EdgeLLMLogger() noexcept = default;
+    EdgeLLMLogger() = default;
+    ~EdgeLLMLogger()
+    {
+        closeFileOutput();
+    }
 
     /*!
      * @brief nvinfer1::ILogger interface implementation for TensorRT integration
@@ -79,16 +88,9 @@ public:
      */
     void log(nvinfer1::ILogger::Severity severity, char const* msg) noexcept override
     {
-        try
-        {
-            // Create source location for external library messages
-            SourceLocation extLoc("TensorRT", "TensorRT_Internal", 0);
-            logWithLocation(severity, msg, extLoc);
-        }
-        catch (...)
-        {
-            // Silently ignore exceptions to maintain noexcept guarantee
-        }
+        // Create source location for external library messages
+        SourceLocation extLoc("TensorRT", "TensorRT_Internal", 0);
+        logWithLocation(severity, msg, extLoc);
     }
 
     /*!
@@ -104,10 +106,35 @@ public:
             return;
         }
 
-        // Format and output the message
         std::string formattedMsg = formatLogEntry(level, msg, loc);
-        std::ostream& stream = (level <= nvinfer1::ILogger::Severity::kWARNING) ? std::cerr : std::cout;
-        stream << formattedMsg << std::endl;
+        std::lock_guard<std::mutex> lock(mSinkMutex);
+
+        if (mConsoleEnabled)
+        {
+            std::ostream& stream = (level <= nvinfer1::ILogger::Severity::kWARNING) ? std::cerr : std::cout;
+            stream << formattedMsg << std::endl;
+        }
+
+        if (mFileEnabled)
+        {
+            if (!ensureFileSinkOpen())
+            {
+                reportFileSinkFailureOnce("failed to open log file sink");
+                return;
+            }
+
+            if (shouldRotate(formattedMsg.size() + 1U))
+            {
+                rotateLogFile();
+            }
+
+            mLogFile << formattedMsg << '\n';
+            mLogFile.flush();
+            if (!mLogFile.good())
+            {
+                reportFileSinkFailureOnce("failed to write log file");
+            }
+        }
     }
 
     /*!
@@ -154,7 +181,7 @@ public:
      * @brief Set minimum logging level
      * @param level Minimum severity level to log
      */
-    void setLevel(nvinfer1::ILogger::Severity level) noexcept
+    void setLevel(nvinfer1::ILogger::Severity level)
     {
         mMinLevel = level;
     }
@@ -163,7 +190,7 @@ public:
      * @brief Get current logging level
      * @return Current minimum severity level
      */
-    nvinfer1::ILogger::Severity getLevel() const noexcept
+    nvinfer1::ILogger::Severity getLevel() const
     {
         return mMinLevel;
     }
@@ -172,7 +199,7 @@ public:
      * @brief Configure whether to show timestamps in log output
      * @param show true to show timestamps, false to hide
      */
-    void setShowTimestamp(bool show) noexcept
+    void setShowTimestamp(bool show)
     {
         mShowTimestamp = show;
     }
@@ -181,7 +208,7 @@ public:
      * @brief Configure whether to show location info in log output
      * @param show true to show location, false to hide
      */
-    void setShowLocation(bool show) noexcept
+    void setShowLocation(bool show)
     {
         mShowLocation = show;
     }
@@ -190,9 +217,69 @@ public:
      * @brief Configure whether to show function names in log output
      * @param show true to show function names, false to hide
      */
-    void setShowFunction(bool show) noexcept
+    void setShowFunction(bool show)
     {
         mShowFunction = show;
+    }
+
+    /*!
+     * @brief Configure whether to keep writing logs to stdout/stderr.
+     * @param enabled true to keep console output, false to disable console output.
+     */
+    void setConsoleEnabled(bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(mSinkMutex);
+        mConsoleEnabled = enabled;
+    }
+
+    /*!
+     * @brief Enable file logging with rotation and retention cleanup.
+     * @param logDir Target log directory.
+     * @param baseName Base name of log files.
+     * @param maxFileBytes Rotate when active log reaches this size.
+     * @param maxFiles Maximum number of rotated files to keep (0 means unlimited).
+     * @param retentionDays Delete rotated logs older than this many days (0 means unlimited).
+     * @return true when the file sink is ready, false when initialization failed.
+     */
+    bool setFileOutput(std::string const& logDir, std::string const& baseName, size_t maxFileBytes, int32_t maxFiles,
+        int32_t retentionDays)
+    {
+        std::lock_guard<std::mutex> lock(mSinkMutex);
+        closeFileOutputLocked();
+
+        mLogDir = std::filesystem::path(logDir);
+        mBaseName = baseName.empty() ? std::string("edgellm") : baseName;
+        mMaxFileBytes = (maxFileBytes == 0) ? (100U * 1024U * 1024U) : maxFileBytes;
+        mMaxFiles = std::max<int32_t>(0, maxFiles);
+        mRetentionDays = std::max<int32_t>(0, retentionDays);
+        mActiveLogPath = mLogDir / (mBaseName + ".log");
+        mFileEnabled = true;
+        mFileErrorReported = false;
+
+        std::error_code ec;
+        std::filesystem::create_directories(mLogDir, ec);
+        if (ec)
+        {
+            mFileEnabled = false;
+            return false;
+        }
+
+        cleanupOldLogFiles();
+        if (!ensureFileSinkOpen())
+        {
+            mFileEnabled = false;
+            return false;
+        }
+        return true;
+    }
+
+    /*!
+     * @brief Disable file logging and close open log file handle.
+     */
+    void closeFileOutput()
+    {
+        std::lock_guard<std::mutex> lock(mSinkMutex);
+        closeFileOutputLocked();
     }
 
 private:
@@ -200,10 +287,189 @@ private:
     bool mShowTimestamp = true;
     bool mShowLocation = true;
     bool mShowFunction = true;
+    bool mConsoleEnabled = true;
+    bool mFileEnabled = false;
+    bool mFileErrorReported = false;
+    std::filesystem::path mLogDir;
+    std::filesystem::path mActiveLogPath;
+    std::string mBaseName{"edgellm"};
+    size_t mMaxFileBytes = 100U * 1024U * 1024U;
+    int32_t mMaxFiles = 20;
+    int32_t mRetentionDays = 7;
+    std::ofstream mLogFile;
+    mutable std::mutex mSinkMutex;
 
-    bool shouldLog(nvinfer1::ILogger::Severity level) const noexcept
+    bool shouldLog(nvinfer1::ILogger::Severity level) const
     {
         return level <= mMinLevel; // Note: lower values are more severe in TensorRT
+    }
+
+    bool ensureFileSinkOpen()
+    {
+        if (mLogFile.is_open())
+        {
+            return true;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(mLogDir, ec);
+        if (ec)
+        {
+            return false;
+        }
+        mLogFile.open(mActiveLogPath, std::ios::app);
+        return mLogFile.is_open();
+    }
+
+    bool shouldRotate(size_t incomingBytes) const
+    {
+        if (mMaxFileBytes == 0)
+        {
+            return false;
+        }
+
+        std::error_code ec;
+        auto currentSize = std::filesystem::file_size(mActiveLogPath, ec);
+        if (ec)
+        {
+            return false;
+        }
+        return currentSize + incomingBytes > mMaxFileBytes;
+    }
+
+    void rotateLogFile()
+    {
+        mLogFile.close();
+
+        std::error_code ec;
+        if (std::filesystem::exists(mActiveLogPath, ec))
+        {
+            auto rotatedPath = buildRotatedLogPath();
+            std::filesystem::rename(mActiveLogPath, rotatedPath, ec);
+            if (ec)
+            {
+                reportFileSinkFailureOnce("failed to rotate log file");
+            }
+        }
+
+        cleanupOldLogFiles();
+        if (!ensureFileSinkOpen())
+        {
+            reportFileSinkFailureOnce("failed to reopen log file after rotation");
+        }
+    }
+
+    std::filesystem::path buildRotatedLogPath() const
+    {
+        auto now = std::chrono::system_clock::now();
+        auto timeT = std::chrono::system_clock::to_time_t(now);
+        std::tm localTm{};
+#if defined(_WIN32)
+        localtime_s(&localTm, &timeT);
+#else
+        localtime_r(&timeT, &localTm);
+#endif
+        std::ostringstream ts;
+        ts << std::put_time(&localTm, "%Y%m%d-%H%M%S");
+
+        for (int32_t seq = 0; seq < 1000; ++seq)
+        {
+            std::string filename = mBaseName + "." + ts.str() + "." + std::to_string(seq) + ".log";
+            auto candidate = mLogDir / filename;
+            std::error_code ec;
+            if (!std::filesystem::exists(candidate, ec))
+            {
+                return candidate;
+            }
+        }
+        return mLogDir / (mBaseName + "." + ts.str() + ".overflow.log");
+    }
+
+    void cleanupOldLogFiles()
+    {
+        std::error_code ec;
+        if (!std::filesystem::exists(mLogDir, ec))
+        {
+            return;
+        }
+
+        std::vector<std::filesystem::path> rotatedLogs;
+        auto const prefix = mBaseName + ".";
+
+        for (auto const& entry : std::filesystem::directory_iterator(mLogDir, ec))
+        {
+            if (ec || !entry.is_regular_file())
+            {
+                continue;
+            }
+            auto const filename = entry.path().filename().string();
+            if (filename.rfind(prefix, 0) != 0 || entry.path().extension() != ".log")
+            {
+                continue;
+            }
+            rotatedLogs.push_back(entry.path());
+        }
+
+        if (mRetentionDays > 0)
+        {
+            auto const cutoff = std::filesystem::file_time_type::clock::now()
+                - std::chrono::hours(static_cast<int64_t>(mRetentionDays) * 24);
+            for (auto it = rotatedLogs.begin(); it != rotatedLogs.end();)
+            {
+                auto const writeTime = std::filesystem::last_write_time(*it, ec);
+                if (!ec && writeTime < cutoff)
+                {
+                    std::filesystem::remove(*it, ec);
+                    it = rotatedLogs.erase(it);
+                    continue;
+                }
+                ec.clear();
+                ++it;
+            }
+        }
+
+        if (mMaxFiles > 0 && static_cast<int32_t>(rotatedLogs.size()) > mMaxFiles)
+        {
+            std::sort(rotatedLogs.begin(), rotatedLogs.end(),
+                [](std::filesystem::path const& a, std::filesystem::path const& b) {
+                    std::error_code leftEc;
+                    std::error_code rightEc;
+                    auto const leftTime = std::filesystem::last_write_time(a, leftEc);
+                    auto const rightTime = std::filesystem::last_write_time(b, rightEc);
+                    if (leftEc || rightEc)
+                    {
+                        return a.string() < b.string();
+                    }
+                    return leftTime < rightTime;
+                });
+
+            auto const deleteCount = static_cast<size_t>(rotatedLogs.size() - mMaxFiles);
+            for (size_t i = 0; i < deleteCount; ++i)
+            {
+                std::filesystem::remove(rotatedLogs[i], ec);
+                ec.clear();
+            }
+        }
+    }
+
+    void reportFileSinkFailureOnce(char const* message)
+    {
+        if (mFileErrorReported)
+        {
+            return;
+        }
+        mFileErrorReported = true;
+        std::cerr << "[LOGGER] " << message << std::endl;
+    }
+
+    void closeFileOutputLocked()
+    {
+        if (mLogFile.is_open())
+        {
+            mLogFile.close();
+        }
+        mFileEnabled = false;
+        mFileErrorReported = false;
     }
 
     std::string formatLogEntry(
@@ -218,7 +484,8 @@ private:
             auto time_t = std::chrono::system_clock::to_time_t(now);
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
 
-            oss << "[" << std::put_time(std::localtime(&time_t), "%H:%M:%S") << "." << std::setfill('0') << std::setw(3)
+            oss << "[" << std::put_time(std::localtime(&time_t), "%Y-%m-%d %H:%M:%S") << "." << std::setfill('0')
+                << std::setw(3)
                 << ms.count() << "] ";
         }
 
@@ -251,7 +518,7 @@ private:
         return oss.str();
     }
 
-    char const* getLevelString(nvinfer1::ILogger::Severity level) const noexcept
+    char const* getLevelString(nvinfer1::ILogger::Severity level) const
     {
         switch (level)
         {
@@ -290,16 +557,9 @@ public:
     /*!
      * @brief Destructor that logs function exit
      */
-    ~ScopedFunctionTracer() noexcept
+    ~ScopedFunctionTracer()
     {
-        try
-        {
-            mLogger.debug("<- Exiting " + mFuncName, mLoc);
-        }
-        catch (...)
-        {
-            // Silently ignore exceptions to maintain noexcept guarantee
-        }
+        mLogger.debug("<- Exiting " + mFuncName, mLoc);
     }
 
 private:
