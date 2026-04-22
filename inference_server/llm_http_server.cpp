@@ -287,11 +287,21 @@ public:
                     mArgs.eagleArgs.draftTopK, mArgs.eagleArgs.draftStep, mArgs.eagleArgs.verifyTreeSize};
                 mEagleRuntime = std::make_unique<rt::LLMInferenceSpecDecodeRuntime>(mArgs.engineDir,
                     mArgs.multimodalEngineDir, std::unordered_map<std::string, std::string>{}, draftingConfig, mStream);
+                if (!mEagleRuntime->captureDecodingCudaGraph(mStream))
+                {
+                    LOG_WARNING(
+                        "Failed to capture CUDA graph for Eagle decoding; proceeding with normal engine execution.");
+                }
             }
             else
             {
                 mRuntime = std::make_unique<rt::LLMInferenceRuntime>(mArgs.engineDir, mArgs.multimodalEngineDir,
                     std::unordered_map<std::string, std::string>{}, mStream);
+                if (!mRuntime->captureDecodingCUDAGraph(mStream))
+                {
+                    LOG_WARNING(
+                        "Failed to capture CUDA graph for decoding; proceeding with normal engine execution.");
+                }
             }
         }
         catch (std::exception const& e)
