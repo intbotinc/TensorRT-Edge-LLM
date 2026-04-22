@@ -237,6 +237,11 @@ inline bool parseChatCompletionRequest(
     request.applyChatTemplate = body.value("apply_chat_template", true);
     request.addGenerationPrompt = body.value("add_generation_prompt", true);
     request.enableThinking = body.value("enable_thinking", false);
+    // Default to false; client opts in with "save_system_prompt_kv_cache": true.
+    // (Default was briefly true for TTFT savings, but combining it with engines
+    // built with FP8 KV cache quantization caused CUDA illegal memory access on
+    // the very first request. Safer to require opt-in.)
+    request.saveSystemPromptKVCache = body.value("save_system_prompt_kv_cache", false);
 
     if (body.contains("lora_name") && !body["lora_name"].is_null())
     {
